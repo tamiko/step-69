@@ -316,6 +316,7 @@ namespace Step69
 
 
 
+
   template <int dim>
   Discretization<dim>::Discretization(const MPI_Comm &   mpi_communicator,
                                       TimerOutput &      computing_timer,
@@ -511,6 +512,7 @@ namespace Step69
 
   namespace
   {
+
     template <int dim>
     struct CopyData
     {
@@ -668,9 +670,9 @@ namespace Step69
                     for (unsigned int d = 0; d < dim; ++d)
                       cell_cij_matrix[d](i, j) += (value * grad_JxW)[d];
 
-                  } /* for i */
-              }     /* for j */
-          }         /* for q */
+                  } /* i */
+              }     /* j */
+          }         /* q */
 
         /* Now we have to compute the boundary normals. Note that the
            following loop does not actually do much unless the the element
@@ -721,9 +723,9 @@ namespace Step69
                   std::get<1>(local_boundary_normal_map[index]);
                 local_boundary_normal_map[index] =
                   std::make_tuple(normal, std::max(old_id, id), position);
-              } /* done with the loop on shape functions */
-          }     /* done with the loop on faces */
-      };        /* done with the definition of the worker */
+              }
+          }
+      };
 
       /* This is the copy data routine for WorkStream */
       const auto copy_local_to_global = [&](const auto &copy) {
@@ -766,21 +768,18 @@ namespace Step69
                       copy_local_to_global,
                       scratch_data,
                       CopyData<dim>());
-    } /* We are done with m_i and c_{ij} */
+    }
 
 
     {
       TimerOutput::Scope t(computing_timer,
                            "offline_data - compute |c_ij|, and n_ij");
 
-      /* Here [i1,i2] represent a subrange of rows */
       const auto on_subranges = [&](auto i1, const auto i2) {
         for (; i1 < i2; ++i1)
           {
             const auto row_index = *i1;
 
-            /* First column-loop: we compute and store the entries of the matrix
-            norm_matrix */
             std::for_each(sparsity_pattern.begin(row_index),
                           sparsity_pattern.end(row_index),
                           [&](const auto &jt) {
@@ -790,8 +789,6 @@ namespace Step69
                             set_entry(norm_matrix, &jt, norm);
                           });
 
-            /* Second column-loop: we normalize the entries of the matrix
-            nij_matrix */
             for (auto &matrix : nij_matrix)
               {
                 auto nij_entry = matrix.begin(row_index);
@@ -803,9 +800,8 @@ namespace Step69
                                 ++nij_entry;
                               });
               }
-
-          } /* row_index */
-      };    /* done with the definition of "on_subranges" */
+          }
+      };
 
       const auto indices = boost::irange<unsigned int>(0, n_locally_relevant);
       parallel::apply_to_subranges(indices.begin(),
@@ -898,7 +894,7 @@ namespace Step69
                   }     /* j */
               }         /* q */
           }             /* f */
-      };                /* Done with the definition of the worker */
+      };
 
       const auto copy_local_to_global = [&](const auto &copy) {
         const auto &is_artificial     = copy.is_artificial;
@@ -919,7 +915,8 @@ namespace Step69
                       scratch_data,
                       CopyData<dim>());
     }
-  } /* assemble() */
+  }
+
 
 
 
@@ -992,11 +989,13 @@ namespace Step69
       Tensor<1, 3> projected_U;
       projected_U[0] = U[0];
 
+
       const auto m   = ProblemDescription<dim>::momentum(U);
       projected_U[1] = n_ij * m;
 
       const auto perpendicular_m = m - projected_U[1] * n_ij;
       projected_U[2] = U[1 + dim] - 0.5 * perpendicular_m.norm_square() / U[0];
+
 
       std::array<double, 4> result;
       result[0] = projected_U[0];
@@ -1020,41 +1019,50 @@ namespace Step69
     }
 
 
-    /* Implements formula (3.7) in Guermond-Popov-2016 */
     DEAL_II_ALWAYS_INLINE inline double
     lambda1_minus(const std::array<double, 4> &riemann_data,
                   const double                 p_star)
     {
-      constexpr double gamma             = ProblemDescription<1>::gamma;
-      const auto &[rho_Z, u_Z, p_Z, a_Z] = riemann_data;
+      /* Implements formula (3.7) in Guermond-Popov-2016 */
+
+      constexpr double gamma = ProblemDescription<1>::gamma;
+      const auto       u     = riemann_data[1];
+      const auto       p     = riemann_data[2];
+      const auto       a     = riemann_data[3];
 
       const double factor = (gamma + 1.0) / 2.0 / gamma;
-      const double tmp    = positive_part((p_star - p_Z) / p_Z);
-      return u_Z - a_Z * std::sqrt(1.0 + factor * tmp);
+      const double tmp    = positive_part((p_star - p) / p);
+      return u - a * std::sqrt(1.0 + factor * tmp);
     }
 
 
-    /* Implements formula (3.8) in Guermond-Popov-2016 */
     DEAL_II_ALWAYS_INLINE inline double
     lambda3_plus(const std::array<double, 4> &riemann_data, const double p_star)
     {
-      constexpr double gamma             = ProblemDescription<1>::gamma;
-      const auto &[rho_Z, u_Z, p_Z, a_Z] = riemann_data;
+      /* Implements formula (3.8) in Guermond-Popov-2016 */
+
+      constexpr double gamma = ProblemDescription<1>::gamma;
+      const auto       u     = riemann_data[1];
+      const auto       p     = riemann_data[2];
+      const auto       a     = riemann_data[3];
 
       const double factor = (gamma + 1.0) / 2.0 / gamma;
-      const double tmp    = positive_part((p_star - p_Z) / p_Z);
-      return u_Z + a_Z * std::sqrt(1.0 + factor * tmp);
+      const double tmp    = positive_part((p_star - p) / p);
+      return u + a * std::sqrt(1.0 + factor * tmp);
     }
 
 
-    /* Implements formula (2.11) in Guermond-Popov-2016*/
     DEAL_II_ALWAYS_INLINE inline double
     lambda_max_two_rarefaction(const std::array<double, 4> &riemann_data_i,
                                const std::array<double, 4> &riemann_data_j)
     {
-      constexpr double gamma             = ProblemDescription<1>::gamma;
-      const auto &[rho_i, u_i, p_i, a_i] = riemann_data_i;
-      const auto &[rho_j, u_j, p_j, a_j] = riemann_data_j;
+      constexpr double gamma = ProblemDescription<1>::gamma;
+      const auto       u_i   = riemann_data_i[1];
+      const auto       p_i   = riemann_data_i[2];
+      const auto       a_i   = riemann_data_i[3];
+      const auto       u_j   = riemann_data_j[1];
+      const auto       p_j   = riemann_data_j[2];
+      const auto       a_j   = riemann_data_j[3];
 
       const double numerator = a_i + a_j - (gamma - 1.) / 2. * (u_j - u_i);
 
@@ -1062,34 +1070,32 @@ namespace Step69
         a_i * std::pow(p_i / p_j, -1. * (gamma - 1.) / 2. / gamma) + a_j * 1.;
 
       /* Formula (4.3) in Guermond-Popov-2016 */
+
       const double p_star =
         p_j * std::pow(numerator / denominator, 2. * gamma / (gamma - 1));
 
       const double lambda1 = lambda1_minus(riemann_data_i, p_star);
       const double lambda3 = lambda3_plus(riemann_data_j, p_star);
 
-      /* Returns formula (2.11) in Guermond-Popov-2016 */
+      /* Formula (2.11) in Guermond-Popov-2016 */
+
       return std::max(positive_part(lambda3), negative_part(lambda1));
     };
 
 
-    /* This estimate is, in general, not as sharp as the two-rarefaction
-       estimate. But it will save the day in the context of near vacuum
-       conditions when the two-rarefaction approximation will tend to
-       exaggerate the maximum wave speed. */
     DEAL_II_ALWAYS_INLINE inline double
     lambda_max_expansion(const std::array<double, 4> &riemann_data_i,
                          const std::array<double, 4> &riemann_data_j)
     {
-      const auto &[rho_i, u_i, p_i, a_i] = riemann_data_i;
-      const auto &[rho_j, u_j, p_j, a_j] = riemann_data_j;
+      const auto u_i = riemann_data_i[1];
+      const auto a_i = riemann_data_i[3];
+      const auto u_j = riemann_data_j[1];
+      const auto a_j = riemann_data_j[3];
 
-      /* Here the constant 5.0 multiplying the soundspeeds is NOT
-         an ad-hoc constant or tuning parameter. It defines a upper bound
-         for any $\gamma \in [0,5/3]$. Do not play with it! */
       return std::max(std::abs(u_i), std::abs(u_j)) + 5. * std::max(a_i, a_j);
     }
   } // namespace
+
 
   template <int dim>
   DEAL_II_ALWAYS_INLINE inline double
@@ -1134,8 +1140,8 @@ namespace Step69
   InitialValues<dim>::InitialValues(const std::string &subsection)
     : ParameterAcceptor(subsection)
   {
-    /* We wire-up InitialValues<dim>::parse_parameters_callback (declared
-       a few lines below) to ParameterAcceptor::parse_parameters_call_back */
+    /* We wire up the slot InitialValues<dim>::parse_parameters_callback to
+       the ParameterAcceptor::parse_parameters_call_back signal: */
     ParameterAcceptor::parse_parameters_call_back.connect(
       std::bind(&InitialValues<dim>::parse_parameters_callback, this));
 
@@ -1164,29 +1170,30 @@ namespace Step69
 
     static constexpr auto gamma = ProblemDescription<dim>::gamma;
 
-    /* Function that translates primitive 1d states in to conserved 2d states.
-       Note that we have some room for freedom to change the direction of the
-       flow. */
+
     const auto from_1d_state =
       [=](const Tensor<1, 3, double> &state_1d) -> rank1_type {
-      const auto &rho = state_1d[0];
-      const auto &u   = state_1d[1];
-      const auto &p   = state_1d[2];
+      const auto rho = state_1d[0];
+      const auto u   = state_1d[1];
+      const auto p   = state_1d[2];
 
       rank1_type state;
 
       state[0] = rho;
       for (unsigned int i = 0; i < dim; ++i)
         state[1 + i] = rho * u * initial_direction[i];
+
       state[dim + 1] = p / (gamma - 1.) + 0.5 * rho * u * u;
 
       return state;
     };
 
+
     initial_state = [=](const Point<dim> & /*point*/, double /*t*/) {
       return from_1d_state(initial_1d_state);
     };
   }
+
 
 
   template <int dim>
@@ -1226,6 +1233,7 @@ namespace Step69
   template <int dim>
   double TimeStep<dim>::step(vector_type &U, double t)
   {
+
     const auto &n_locally_owned    = offline_data->n_locally_owned;
     const auto &n_locally_relevant = offline_data->n_locally_relevant;
 
@@ -1242,22 +1250,19 @@ namespace Step69
 
     const auto &boundary_normal_map = offline_data->boundary_normal_map;
 
+
     {
       TimerOutput::Scope time(computing_timer, "time_step - 1 compute d_ij");
 
-      /* Definition of the "worker" that computes the viscosity d_{ij} */
       const auto on_subranges = [&](auto i1, const auto i2) {
         for (const auto i : boost::make_iterator_range(i1, i2))
           {
             const auto U_i = gather(U, i);
 
-            /* Column-loop */
             for (auto jt = sparsity.begin(i); jt != sparsity.end(i); ++jt)
               {
                 const auto j = jt->column();
 
-                /* We compute only dij if i < j (upper triangular entries) and
-                   later we copy this entry into dji. */
                 if (j >= i)
                   continue;
 
@@ -1271,8 +1276,6 @@ namespace Step69
 
                 double d = norm * lambda_max;
 
-                /* If both support points happen to be at the boundary
-                   we have to compute dji too and then take max(dij,dji) */
                 if (boundary_normal_map.count(i) != 0 &&
                     boundary_normal_map.count(j) != 0)
                   {
@@ -1286,24 +1289,20 @@ namespace Step69
                     d = std::max(d, norm_2 * lambda_max_2);
                   }
 
-                /* We set the upper triangular entry */
                 set_entry(dij_matrix, jt, d);
-                /* We set the lower triangular entry */
                 dij_matrix(j, i) = d;
-              } /* End of column-loop */
-          }     /* End of row-loop */
-      };        /* End of definition of on_subranges */
+              }
+          }
+      };
 
       parallel::apply_to_subranges(indices_relevant.begin(),
                                    indices_relevant.end(),
                                    on_subranges,
                                    4096);
-    } /* End of the computation of the off-diagonal entries of dij_matrix */
+    }
 
 
-    /* We define tau_max as an atomic double in order to avoid any read/write
-       conflicts between threads and initialize it as the largest possible
-       number that can be represented by the float-type double. */
+
     std::atomic<double> tau_max{std::numeric_limits<double>::infinity()};
 
     {
@@ -1317,7 +1316,6 @@ namespace Step69
           {
             double d_sum = 0.;
 
-            /* See the definition of dii in the introduction. */
             for (auto jt = sparsity.begin(i); jt != sparsity.end(i); ++jt)
               {
                 const auto j = jt->column();
@@ -1329,9 +1327,7 @@ namespace Step69
               }
 
             dij_matrix.diag_element(i) = d_sum;
-
-            const double mass = lumped_mass_matrix.diag_element(i);
-            /* See the definition of time-step constraint (CFL) */
+            const double mass   = lumped_mass_matrix.diag_element(i);
             const double tau    = cfl_update * mass / (-2. * d_sum);
             tau_max_on_subrange = std::min(tau_max_on_subrange, tau);
           }
@@ -1341,27 +1337,27 @@ namespace Step69
           current_tau_max > tau_max_on_subrange &&
           !tau_max.compare_exchange_weak(current_tau_max, tau_max_on_subrange))
           ;
-      }; /* End of definition of the worker on_subranges */
+      };
 
-      /* Thread-parallel loop on locally owned rows */
       parallel::apply_to_subranges(indices_relevant.begin(),
                                    indices_relevant.end(),
                                    on_subranges,
                                    4096);
 
-      /* We find the tau_max min among all MPI processes */
+
       tau_max.store(Utilities::MPI::min(tau_max.load(), mpi_communicator));
+
 
       AssertThrow(!std::isnan(tau_max) && !std::isinf(tau_max) && tau_max > 0.,
                   ExcMessage("I'm sorry, Dave. I'm afraid I can't "
                              "do that. - We crashed."));
-    } /* End of the computation of the diagonal entries of dij_matrix */
+    }
+
 
 
     {
       TimerOutput::Scope time(computing_timer, "time_step - 3 perform update");
 
-      /* We define the "worker" for the subranges of rows */
       const auto on_subranges = [&](auto i1, const auto i2) {
         for (const auto i : boost::make_iterator_range(i1, i2))
           {
@@ -1374,7 +1370,6 @@ namespace Step69
 
             auto U_i_new = U_i;
 
-            /* This is the loop on the columns */
             for (auto jt = sparsity.begin(i); jt != sparsity.end(i); ++jt)
               {
                 const auto j = jt->column();
@@ -1385,7 +1380,6 @@ namespace Step69
                 const auto c_ij = gather_get_entry(cij_matrix, jt);
                 const auto d_ij = get_entry(dij_matrix, jt);
 
-                /* We define use the update formula here */
                 for (unsigned int k = 0; k < problem_dimension; ++k)
                   {
                     U_i_new[k] +=
@@ -1398,12 +1392,12 @@ namespace Step69
           }
       };
 
-      /* Thread-parallel loop on locally owned rows */
       parallel::apply_to_subranges(indices_owned.begin(),
                                    indices_owned.end(),
                                    on_subranges,
                                    4096);
-    } /* End of the computation of the new solution */
+    }
+
 
 
     {
@@ -1415,7 +1409,6 @@ namespace Step69
           {
             const auto i = it->first;
 
-            /* Only iterate over locally owned subset */
             if (i >= n_locally_owned)
               continue;
 
@@ -1423,13 +1416,7 @@ namespace Step69
             const auto &id       = std::get<1>(it->second);
             const auto &position = std::get<2>(it->second);
 
-            /* Skip constrained degrees of freedom */
-            if (++sparsity.begin(i) == sparsity.end(i))
-              continue;
-
             auto U_i = gather(temp, i);
-
-            /* On boundary 1 remove the normal component of the momentum: */
 
             if (id == Boundary::slip)
               {
@@ -1439,7 +1426,6 @@ namespace Step69
                   U_i[k + 1] = m[k];
               }
 
-            /* On boundary 2 enforce initial conditions: */
             else if (id == Boundary::dirichlet)
               {
                 U_i = initial_values->initial_state(position, t + tau_max);
@@ -1452,14 +1438,14 @@ namespace Step69
       on_subranges(boundary_normal_map.begin(), boundary_normal_map.end());
     }
 
+
     for (auto &it : temp)
       it.update_ghost_values();
 
     U.swap(temp);
 
     return tau_max;
-  } /* End of TimeStep<dim>::step */
-
+  }
 
 
   template <int dim>
@@ -1514,13 +1500,9 @@ namespace Step69
     const auto &n_locally_owned = offline_data->n_locally_owned;
     const auto  indices = boost::irange<unsigned int>(0, n_locally_owned);
 
-    /* We define the r_i_max and r_i_min in the current MPI process as
-       atomic doubles in order to resolve conflicts among threads. */
     std::atomic<double> r_i_max{0.};
     std::atomic<double> r_i_min{std::numeric_limits<double>::infinity()};
 
-    /* Implementation of the first worker: computes the averaged gradient
-       at each node and the global max and mins of such gradients. */
     {
       const auto on_subranges = [&](auto i1, const auto i2) {
         double r_i_max_on_subrange = 0.;
@@ -1529,13 +1511,10 @@ namespace Step69
         for (; i1 < i2; ++i1)
           {
             const auto i = *i1;
-
             Assert(i < n_locally_owned, ExcInternalError());
 
             Tensor<1, dim> r_i;
 
-            /* This is the loop on the columns */
-            /* We compute the numerator of expression (**) */
             for (auto jt = sparsity.begin(i); jt != sparsity.end(i); ++jt)
               {
                 const auto j = jt->column();
@@ -1543,14 +1522,11 @@ namespace Step69
                 if (i == j)
                   continue;
 
-                /* Usual practice is that schlieren_index = 0 (density of the
-                  system). In this tutorial step schlieren_index is set by the
-                  constructor. */
                 const auto U_js = U[schlieren_index].local_element(j);
                 const auto c_ij = gather_get_entry(cij_matrix, jt);
-
                 r_i += c_ij * U_js;
               }
+
 
             const auto bnm_it = boundary_normal_map.find(i);
             if (bnm_it != boundary_normal_map.end())
@@ -1564,20 +1540,13 @@ namespace Step69
                   r_i = 0.;
               }
 
-            /* Here we remind the reader that we are not interested in the
-               nodal gradients per se. We want their norms in order to
-               compute the Schlieren indicator. Finally, we have to
-               divide r[i] by m_i. */
-            const double m_i = lumped_mass_matrix.diag_element(i);
-            r[i]             = r_i.norm() / m_i;
-
+            const double m_i    = lumped_mass_matrix.diag_element(i);
+            r[i]                = r_i.norm() / m_i;
             r_i_max_on_subrange = std::max(r_i_max_on_subrange, r[i]);
             r_i_min_on_subrange = std::min(r_i_min_on_subrange, r[i]);
           }
 
-        /* We compare the current_r_i_max and current_r_i_min (in the current
-           subrange) with r_i_max and r_i_min (for the current MPI process)
-           and update them if necessary */
+
         double current_r_i_max = r_i_max.load();
         while (
           current_r_i_max < r_i_max_on_subrange &&
@@ -1597,23 +1566,18 @@ namespace Step69
                                    4096);
     }
 
+
     r_i_max.store(Utilities::MPI::max(r_i_max.load(), mpi_communicator));
     r_i_min.store(Utilities::MPI::min(r_i_min.load(), mpi_communicator));
 
-    /* Implementation of the second worker: we have the vector r_i and the
-       scalars r_i_max and r_i_min at our disposal. Now we are in position of
-       actually computing the Schlieren indicator. */
 
     {
       const auto on_subranges = [&](auto i1, const auto i2) {
         for (; i1 < i2; ++i1)
           {
             const auto i = *i1;
-
             Assert(i < n_locally_owned, ExcInternalError());
 
-            /* It's just the Schlieren formula */
-            /* There is no loop on columns for this case, we don't need it */
             schlieren.local_element(i) =
               1. - std::exp(-schlieren_beta * (r[i] - r_i_min) /
                             (r_i_max - r_i_min));
@@ -1628,7 +1592,6 @@ namespace Step69
 
     schlieren.update_ghost_values();
   }
-
 
 
   template <int dim>
@@ -1705,42 +1668,52 @@ namespace Step69
   template <int dim>
   void TimeLoop<dim>::run()
   {
+
     pcout << "Reading parameters and allocating objects... " << std::flush;
 
-    /* Initialization of the global ParameterHandler. */
     ParameterAcceptor::initialize("step-69.prm");
     pcout << "done" << std::endl;
 
+
     print_head(pcout, "create triangulation");
     discretization.setup();
+
+    pcout << "Number of active cells:       "
+          << discretization.triangulation.n_global_active_cells() << std::endl;
+
 
     print_head(pcout, "compute offline data");
     offline_data.setup();
     offline_data.assemble();
 
+    pcout << "Number of degrees of freedom: "
+          << offline_data.dof_handler.n_dofs() << std::endl;
+
+
     print_head(pcout, "set up time step");
     time_step.prepare();
     schlieren_postprocessor.prepare();
+
 
     double       t            = 0.;
     unsigned int output_cycle = 0;
 
     print_head(pcout, "interpolate initial values");
-    /* The vector U and time_step.temp are the only ones in the entire code
-       storing the old and/or new state of the system. */
     auto U = interpolate_initial_values();
 
-    /* By default resume is false, but that could have changed after reading
-       the input file when calling ParameterAcceptor::initialize */
+
     if (resume)
       {
         print_head(pcout, "restore interrupted computation");
 
-        const auto &       triangulation = discretization.triangulation;
-        const unsigned int i    = triangulation.locally_owned_subdomain();
-        std::string        name = base_name + "-checkpoint-" +
+        const auto &triangulation = discretization.triangulation;
+
+        const unsigned int i = triangulation.locally_owned_subdomain();
+
+        std::string name = base_name + "-checkpoint-" +
                            Utilities::int_to_string(i, 4) + ".archive";
         std::ifstream file(name, std::ios::binary);
+
 
         boost::archive::binary_iarchive ia(file);
         ia >> t >> output_cycle;
@@ -1753,25 +1726,32 @@ namespace Step69
           }
       }
 
+
     output(U, base_name + "-solution", t, output_cycle++);
 
     print_head(pcout, "enter main loop");
 
     for (unsigned int cycle = 1; t < t_final; ++cycle)
       {
+
         std::ostringstream head;
-        head << "Cycle  " << Utilities::int_to_string(cycle, 6) << "  ("
-             << std::fixed << std::setprecision(1) << t / t_final * 100 << "%)";
         std::ostringstream secondary;
+
+        head << "Cycle  " << Utilities::int_to_string(cycle, 6) << "  (" //
+             << std::fixed << std::setprecision(1) << t / t_final * 100  //
+             << "%)";
         secondary << "at time t = " << std::setprecision(8) << std::fixed << t;
+
         print_head(pcout, head.str(), secondary.str());
+
 
         t += time_step.step(U, t);
 
+
         if (t > output_cycle * output_granularity)
           output(U, base_name + "-solution", t, output_cycle++, true);
+      }
 
-      } /* End of time loop */
 
     if (output_thread.joinable())
       output_thread.join();
@@ -1799,11 +1779,12 @@ namespace Step69
     constexpr auto problem_dimension =
       ProblemDescription<dim>::problem_dimension;
 
+
     for (unsigned int i = 0; i < problem_dimension; ++i)
       VectorTools::interpolate(offline_data.dof_handler,
                                ScalarFunctionFromFunctionObject<dim, double>(
-                                 [&](const auto &p) {
-                                   return initial_values.initial_state(p, t)[i];
+                                 [&](const auto &x) {
+                                   return initial_values.initial_state(x, t)[i];
                                  }),
                                U[i]);
 
@@ -1824,8 +1805,7 @@ namespace Step69
     pcout << "TimeLoop<dim>::output(t = " << t
           << ", checkpoint = " << checkpoint << ")" << std::endl;
 
-    /* We check if the thread is still running */
-    /* If so, we wait to for it to join. */
+
     if (output_thread.joinable())
       {
         TimerOutput::Scope timer(computing_timer, "time_loop - stalled output");
@@ -1834,9 +1814,8 @@ namespace Step69
 
     constexpr auto problem_dimension =
       ProblemDescription<dim>::problem_dimension;
-    const auto &component_names = ProblemDescription<dim>::component_names;
 
-    /* We make a copy the vector we want to output */
+
     for (unsigned int i = 0; i < problem_dimension; ++i)
       {
         output_vector[i] = U[i];
@@ -1845,20 +1824,22 @@ namespace Step69
 
     schlieren_postprocessor.compute_schlieren(output_vector);
 
-    /* We define the lambda function "output_worker" */
+
     const auto output_worker = [this, name, t, cycle, checkpoint]() {
       constexpr auto problem_dimension =
         ProblemDescription<dim>::problem_dimension;
+      const auto &component_names = ProblemDescription<dim>::component_names;
+
       const auto &dof_handler   = offline_data.dof_handler;
       const auto &triangulation = discretization.triangulation;
       const auto &mapping       = discretization.mapping;
 
       if (checkpoint)
         {
+
           const unsigned int i    = triangulation.locally_owned_subdomain();
           std::string        name = base_name + "-checkpoint-" +
                              Utilities::int_to_string(i, 4) + ".archive";
-
 
           std::ofstream file(name, std::ios::binary | std::ios::trunc);
 
@@ -1868,6 +1849,7 @@ namespace Step69
             for (const auto &it2 : it1)
               oa << it2;
         }
+
 
       DataOut<dim> data_out;
       data_out.attach_dof_handler(dof_handler);
@@ -1887,18 +1869,13 @@ namespace Step69
       data_out.set_flags(flags);
 
       data_out.write_vtu_with_pvtu_record("", name, cycle, 6, mpi_communicator);
-
-      /* There is no return statement, we don't need it this is a void-like
-         lambda expression */
     };
 
-    /* We launch the thread that executing the output and abandon the
-       function TimeLoop<dim>::output (returning the control to the
-       function that called it). */
+
     output_thread = std::move(std::thread(output_worker));
   }
 
-} /* End of namespace Step69 */
+} // namespace Step69
 
 
 int main(int argc, char *argv[])
